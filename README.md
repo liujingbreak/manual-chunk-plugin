@@ -71,4 +71,4 @@ Or I can also combine `lib` and `vendor-lib` into a single chunk, every combinat
 
 The good thing of this plugin in contrast with CommonChunkPlugin is, it is very streightforward to understand how chunks are actually splitted, but CommonChunkPlugin will decide splitting depends on *how often* a module is referred by other chunk, and you may need to manuly put "vendor" chunk in config file it you want to split more than 1 common chunk, which is not the part I want it to be `manual`.
 
-It plugin doesn't come up with unit test file, because it is just seperated from my company's common architecture project as a part and covered by its integration test.
+It plugin doesn't come up with unit test file, because it is just seperated from my company's common architecture project [https://github.com/dr-web-house](https://github.com/dr-web-house) ([Document](http://dr-web-house.github.io)) as a part and covered by its integration test. 
