@@ -1,6 +1,6 @@
 {
   "name": "manual-chunk-plugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Webpack 2 plugin for splitting chunk file via manual assignment",
   "main": "manual-chunk-plugin.js",
   "scripts": {
