@@ -77,7 +77,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 			var isInitialChunk = chunk.isInitial();
 			divideLog.debug('Scan original chunk [%s]', getChunkName(chunk));
 
-			_.each(chunk.modules.slice(), (m, idx) => {
+			_.each(chunk.getModules ? chunk.getModules() : chunk.modules, (m, idx) => {
 				divideLog.debug('\tscan module (%s)', simpleModuleId(m));
 				var file = _.get(m, ['fileDependencies', 0]);
 				if (!file)
@@ -213,7 +213,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 			log.debug('\t%s %s', chunk.hasRuntime() ? '(has runtime)' : '', chunk.hasEntryModule() ? `(has entryModule: ${simpleModuleId(chunk.entryModule)})` : '');
 
 			log.debug('  ├─ modules');
-			chunk.modules.forEach(function(module) {
+			(chunk.getModules ? chunk.getModules() : chunk.modules).forEach(function(module) {
 				// Explore each source file path that was included into the module:
 				log.debug('  │  ├─ %s', simpleModuleId(module));
 				if (showFileDep)
