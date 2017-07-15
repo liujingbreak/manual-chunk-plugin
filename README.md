@@ -39,20 +39,21 @@ plugins: [
 		manifest: 'runtime',
 		// The default chunk name if getChunkName(file) returns null for that module
 		defaultChunkName: 'vendor-lib'), 
-		// Callback to return chunk name of each "module",
+		// A required callback function that returns chunk name of each "module",
 		// Returning same chunk name for different "module" leads to put then into same chunk file
-		getChunkName: (file) => {
+		getChunkName: (file, originalChunk) => {
 			var relativePath = path.relative(process.cwd(), file);
 			var dirName = relativePath.split(path.sep)[0];
 			return dirName === 'node_modules' ? 'vendor-lib' : dirName;
 		},
-		// [optinal] opts.changeAsyncChunkName default is prepending string "splitload-" to original name.
-		// By default split-load chunk's name is null, when this plugin kicks in, it assign name to // those chunks:
-		// 1) If chunk is a initial chunk, name that chunk with `opts.getChunkName(file)`
-		// 2) If chunk is an async(split-load) chunk, name that chunk with `opts.changeAsyncChunkName(opts.getChunkName(file))`
-		// You should also set a proper Webpack config property `output.chunkFilename` like
-		// "[id].[name].[chunkhash:10].js" to explicitly use a chunk name for output file.
-		changeAsyncChunkName: (name) => 'splitload-' + name
+		// An optional callback function that returns chunk name of split-load "module":
+		// function(file: string, originalChunk: Chunk) => string
+		// default behaviour is appending ".split" to the string returned by `opts.getChunkName()`.
+		// By default split-load chunk's name is null, when this plugin kicks in
+		//  1) If chunk is a initial chunk, will name that chunk with `opts.getChunkName(file)`
+		//  2) If chunk is an async(split-load) chunk, will name that chunk with `opts.getAsyncChunkName(file)`
+		//     or `opts.getChunkName(file) + ".split"`
+		getAsyncChunkName: (file, originalChunk) => this.opts.getChunkName(file, originalChunk) + '.split'
 	}),
 	...
 ]
