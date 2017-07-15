@@ -1,22 +1,29 @@
-var log = require('log4js').getLogger('wfh.ManualChunkPlugin');
-var logFd = log; //require('log4js').getLogger('wfh.ManualChunkPlugin.fd');
-var logD = log; //require('log4js').getLogger('wfh.ManualChunkPlugin.d');
+var log = require('@log4js-node/log4js-api').getLogger('wfh.ManualChunkPlugin');
+var logFd = require('@log4js-node/log4js-api').getLogger('wfh.ManualChunkPlugin-fd');
+var logD = require('log4js').getLogger('wfh.ManualChunkPlugin-d');
 
-var divideLog = require('log4js').getLogger('wfh.ManualChunkPlugin.divideModule');
+var divideLog = require('@log4js-node/log4js-api').getLogger('wfh.ManualChunkPlugin-m');
 var _ = require('lodash');
 var Path = require('path');
 var Tapable = require('tapable');
 var chalk = require('chalk');
 var nextIdent = 0;
 
-var showDependency = false;
 var showFileDep = true;
 
 /**
  * ManualChunkPlugin
  * @param {string} opts.manifest name runtime chunk
+ *
  * @param {string} opts.defaultChunkName when encountering a module has not chunk name setting,
  * move it to a default chunk with name of this value
+ *
+ * @param {function(name: string) => string} [optinal] opts.changeAsyncChunkName
+ * default is prepending string "splitload-" to original name.
+ * By default split-load chunk's name is null, when this plugin kicks in
+ *  1) If chunk is a initial chunk, name that chunk with `opts.getChunkName(file)`
+ *  2) If chunk is an async(split-load) chunk, name that chunk with `opts.changeAsyncChunkName(opts.getChunkName(file))`
+ *
  * @param {function(file: string)} opts.getChunkName a function callback used to provide chunk name to which file belongs
  */
 function ManualChunkPlugin(opts) {
@@ -25,6 +32,10 @@ function ManualChunkPlugin(opts) {
 	this.opts = opts;
 	if (!opts.manifest)
 		opts.manifest = 'manifest';
+	if (!this.opts.changeAsyncChunkName)
+		this.opts.changeAsyncChunkName = function(name) {
+			return 'splitload-' + name;
+		};
 }
 
 module.exports = ManualChunkPlugin;
@@ -56,7 +67,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 				}
 			});
 
-			divideModule.call(plugin, compilation, chunks, bundleInitialChunkMap, bundleAsyncChunkMap);
+			divideChunks.call(plugin, compilation, chunks, bundleInitialChunkMap, bundleAsyncChunkMap);
 		});
 	});
 	compiler.plugin('emit', function(compilation, callback) {
@@ -65,8 +76,8 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 		callback();
 	});
 
-	function divideModule(compilation, chunks, bundleInitialChunkMap, bundleAsyncChunkMap) {
-		divideLog.debug(_.repeat('-', 10) + ' divide module ' + _.repeat('-', 10));
+	function divideChunks(compilation, chunks, bundleInitialChunkMap, bundleAsyncChunkMap) {
+		divideLog.debug(_.repeat('-', 10) + ' divide chunks ' + _.repeat('-', 10));
 		chunks = chunks.slice();
 		// create initial manifest chunk
 		var self = this;
@@ -75,41 +86,13 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 		chunks.forEach(chunk => {
 			var divededChunkSet = divededChunkMap[chunk.debugId] = {};
 			var isInitialChunk = chunk.isInitial();
+			if (!isInitialChunk && chunk.name) {
+				divideLog.debug('Skip already named async chunk [%s]', chunk.name);
+				return;
+			}
 			divideLog.debug('Scan original chunk [%s]', getChunkName(chunk));
-
 			_.each(chunk.getModules ? chunk.getModules() : chunk.modules, (m, idx) => {
-				divideLog.debug('\tscan module (%s)', simpleModuleId(m));
-				var file = _.get(m, ['fileDependencies', 0]);
-				if (!file)
-					return;
-				var bundle;
-				if (self.opts.getChunkName)
-					bundle = self.opts.getChunkName(file);
-
-				if (bundle == null) {
-					divideLog.warn('Use chunk [%s] for %s', self.opts.defaultChunkName,
-						chalk.red(Path.relative(compiler.options.context || process.cwd(), file)));
-					bundle = self.opts.defaultChunkName;
-				}
-				if (chunk.name == null) {
-					if (isInitialChunk && !_.has(bundleInitialChunkMap, bundle)) {
-						chunk.name = bundle;
-						bundleInitialChunkMap[bundle] = chunk;
-						return;
-					} else if (!isInitialChunk && !_.has(bundleAsyncChunkMap, bundle)) {
-						chunk.name = 'splitload-' + bundle;
-						bundleAsyncChunkMap[bundle] = chunk;
-						return;
-					}
-				}
-				if (bundle === chunk.name) {
-					if (isInitialChunk)
-						bundleInitialChunkMap[bundle] = chunk;
-					else
-						bundleAsyncChunkMap[bundle] = chunk;
-					return;
-				}
-				onEachChunk.call(compilation, bundleInitialChunkMap, bundleAsyncChunkMap, m, bundle, divededChunkSet, chunk, isInitialChunk);
+				doModule(self, compilation, chunk, m, isInitialChunk, bundleInitialChunkMap, bundleAsyncChunkMap, divededChunkSet);
 			});
 			divideLog.debug('');
 		});
@@ -124,17 +107,58 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 		});
 	}
 
-	function onEachChunk(bundleInitialChunkMap, bundleAsyncChunkMap, m, bundle, divededChunkSet, chunk, isInitialChunk) {
+	function doModule(plugin, compilation, chunk, m, isInitialChunk,
+		bundleInitialChunkMap, bundleAsyncChunkMap, divededChunkSet) {
+		var self = plugin;
+		divideLog.debug('├─ Module: %s', simpleModuleId(m));
+		var file = m.resource || _.get(m, ['fileDependencies', 0]);
+		if (!file) {
+			divideLog.debug('│ ├─ Skip due to not a NormalModule'); // probable a ContextModule
+			return;
+		}
+		var bundle;
+		if (self.opts.getChunkName)
+			bundle = self.opts.getChunkName(file);
+
+		if (bundle == null) {
+			divideLog.warn('│ ├─ Use chunk [%s] for %s', self.opts.defaultChunkName,
+				chalk.red(Path.relative(compiler.options.context || process.cwd(), file)));
+			bundle = self.opts.defaultChunkName;
+		}
+		if (chunk.name == null) {
+			if (isInitialChunk && !_.has(bundleInitialChunkMap, bundle)) {
+				chunk.name = bundle;
+				bundleInitialChunkMap[bundle] = chunk;
+				return;
+			} else if (!isInitialChunk && !_.has(bundleAsyncChunkMap, bundle)) {
+				chunk.name = plugin.opts.changeAsyncChunkName(bundle);
+				bundleAsyncChunkMap[bundle] = chunk;
+				return;
+			}
+		}
+		if (bundle === chunk.name) {
+			if (isInitialChunk)
+				bundleInitialChunkMap[bundle] = chunk;
+			else
+				bundleAsyncChunkMap[bundle] = chunk;
+			return;
+		}
+		moveModuleAndCreateChunk.call(compilation, bundleInitialChunkMap, bundleAsyncChunkMap,
+			m, bundle, divededChunkSet, chunk, isInitialChunk);
+	}
+
+	function moveModuleAndCreateChunk(bundleInitialChunkMap, bundleAsyncChunkMap, m, bundle,
+		divededChunkSet, chunk, isInitialChunk) {
 		var newChunk;
 		if (isInitialChunk && _.has(bundleInitialChunkMap, bundle)) {
 			newChunk = bundleInitialChunkMap[bundle];
-			divideLog.debug('\t\texisting chunk [%s]', getChunkName(newChunk));
+			divideLog.debug('│ ├─ existing chunk [%s]', getChunkName(newChunk));
 		} else if (!isInitialChunk && _.has(bundleAsyncChunkMap, bundle)) {
 			newChunk = bundleAsyncChunkMap[bundle];
-			divideLog.debug('\t\texisting chunk [%s]', getChunkName(newChunk));
+			divideLog.debug('│ ├─ existing async chunk [%s]', getChunkName(newChunk));
 		} else {
 			newChunk = this.addChunk(bundle);
-			divideLog.debug('\t\tcreate %s chunk [%s] %s', isInitialChunk ? 'initial' : 'async', bundle, getChunkName(newChunk));
+			divideLog.debug('│ ├─ Create %s chunk [%s] %s', isInitialChunk ? 'initial' : 'async', bundle, getChunkName(newChunk));
 			if (isInitialChunk)
 				bundleInitialChunkMap[bundle] = newChunk;
 			else
@@ -142,7 +166,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 		}
 		// move module
 		chunk.moveModule(m, newChunk);
-		divideLog.debug('\t\tmove module "%s" from chunk [%s] to [%s]', simpleModuleId(m), getChunkName(chunk), getChunkName(newChunk));
+		divideLog.debug('│ ├─ move module from chunk [%s] to [%s]', getChunkName(chunk), getChunkName(newChunk));
 		// m.removeChunk(chunk);
 		// var added = newChunk.addModule(m);
 		// if (added) {
@@ -153,7 +177,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 		// }
 		if (_.has(divededChunkSet, newChunk.debugId))
 			return;
-		divideLog.debug('\t\tchunk [%s] is splitted', getChunkName(chunk));
+		divideLog.debug('│ ├─ chunk [%s] is splitted', getChunkName(chunk));
 		divededChunkSet[newChunk.debugId] = 1;
 
 		if (isInitialChunk) {
@@ -191,7 +215,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 			if (chunk.isEmpty() && !chunk.hasRuntime()) {
 				log.info('Empty chunk %s', getChunkName(chunk));
 				chunk.remove('empty');
-				compilation.chunks.splice(compilation.chunks.indexOf(chunk), 1);
+				//compilation.chunks.splice(compilation.chunks.indexOf(chunk), 1);
 				if (chunk.name)
 					delete compilation.namedChunks[chunk.name];
 				return true;
@@ -201,7 +225,7 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 	}
 
 	function simpleModuleId(m) {
-		return Path.relative(compiler.options.context, (m.identifier() || m.name).split('!').slice().pop());
+		return m.resource ? Path.relative(compiler.options.context, m.resource) : m.identifier();
 	}
 
 	function printChunks(compilation, chunks) {
@@ -218,28 +242,28 @@ ManualChunkPlugin.prototype.apply = function(compiler) {
 				log.debug('  │  ├─ %s', simpleModuleId(module));
 				if (showFileDep)
 					_.each(module.fileDependencies, filepath => {
-						logFd.debug('  │  │  ├─ %s', chalk.blue('(fileDependency): ' + Path.relative(compiler.options.context, filepath)));
+						logFd.isDebugEnabled() && log.debug('  │  │  ├─ %s', chalk.blue('(fileDependency): ' + Path.relative(compiler.options.context, filepath)));
 					});
 				_.each(module.blocks, block => {
 					log.debug('  │  │  ├─ (block %s): %s', block.constructor.name,
 						_.map(block.chunks, ck => {
 							return getChunkName(ck);
 						}).join(', '));
-					if (showDependency) {
+					if (logD.isDebugEnabled()) {
 						_.each(block.dependencies, bDep => {
-							logD.debug(`  │  │  │  ├─ ${bDep.constructor.name}`);
+							log.debug(`  │  │  │  ├─ ${bDep.constructor.name}`);
 							if (bDep.module)
-								logD.debug(`  │  │  │  │  ├─ .module ${simpleModuleId(bDep.module)}`);
+								log.debug(`  │  │  │  │  ├─ .module ${simpleModuleId(bDep.module)}`);
 						});
 					}
 				});
-				if (showDependency) {
+				if (logD.isDebugEnabled()) {
 					_.each(module.dependencies, dep => {
-						var source = module._source.source();
-						logD.debug('  │  │  ├─ %s', chalk.blue('(dependency %s): ' + dep.constructor.name),
-							dep.range ? source.substring(dep.range[0], dep.range[1]) : '');
+						var source = module._source ? module._source.source() : null;
+						log.debug('  │  │  ├─ %s', chalk.blue('(dependency %s): ' + dep.constructor.name),
+							(dep.range && source) ? source.substring(dep.range[0], dep.range[1]) : '');
 						if (dep.module)
-							logD.debug(`  │  │  │  ├─ .module ${chalk.blue(simpleModuleId(dep.module))}`);
+							log.debug(`  │  │  │  ├─ .module ${chalk.blue(simpleModuleId(dep.module))}`);
 					});
 				}
 			});

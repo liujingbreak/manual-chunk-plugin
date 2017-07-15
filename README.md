@@ -45,7 +45,14 @@ plugins: [
 			var relativePath = path.relative(process.cwd(), file);
 			var dirName = relativePath.split(path.sep)[0];
 			return dirName === 'node_modules' ? 'vendor-lib' : dirName;
-		}
+		},
+		// [optinal] opts.changeAsyncChunkName default is prepending string "splitload-" to original name.
+		// By default split-load chunk's name is null, when this plugin kicks in, it assign name to // those chunks:
+		// 1) If chunk is a initial chunk, name that chunk with `opts.getChunkName(file)`
+		// 2) If chunk is an async(split-load) chunk, name that chunk with `opts.changeAsyncChunkName(opts.getChunkName(file))`
+		// You should also set a proper Webpack config property `output.chunkFilename` like
+		// "[id].[name].[chunkhash:10].js" to explicitly use a chunk name for output file.
+		changeAsyncChunkName: (name) => 'splitload-' + name
 	}),
 	...
 ]
